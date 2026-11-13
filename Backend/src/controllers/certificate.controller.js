@@ -346,13 +346,8 @@ const rejectCertificateBatch = asyncHandler(async (req, res) => {
   batch.rejectionReason = reason?.trim() || 'Rejected by Super Admin';
   batch.rejectedAt = new Date();
 
-  // 1. Permanently delete any generated certificates associated with this batch from the database
-  const certDeleteResult = await Certificate.deleteMany({
-    $or: [
-      { batchId: batch._id },
-      { eventName: batch.eventName, eventDate: batch.eventDate },
-    ],
-  });
+  // 1. Permanently delete any generated certificates associated strictly with this batch
+  const certDeleteResult = await Certificate.deleteMany({ batchId: batch._id });
 
   // 2. Suppress and cancel any pending or in-flight background queue jobs for this batch
   await BackgroundJob.updateMany(
@@ -465,14 +460,8 @@ const updateCertificateBatch = asyncHandler(async (req, res) => {
     }
   }
 
-  // When an edit is performed on a batch, delete any prior certificates and suppress stale queue jobs
-  // so no outdated/mismatched certificates remain in the database
-  const certDeleteResult = await Certificate.deleteMany({
-    $or: [
-      { batchId: batch._id },
-      { eventName: batch.eventName, eventDate: batch.eventDate },
-    ],
-  });
+  // When an edit is performed on a batch, delete prior certificates belonging ONLY to this specific batch
+  const certDeleteResult = await Certificate.deleteMany({ batchId: batch._id });
 
   await BackgroundJob.updateMany(
     {
