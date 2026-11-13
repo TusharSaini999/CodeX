@@ -6,6 +6,8 @@ import crypto from 'crypto';
 import connectDB from '../config/db.js';
 import { CertificateBatch } from '../models/certificateBatch.model.js';
 import { Certificate } from '../models/certificate.model.js';
+import { BackgroundJob } from '../models/backgroundJob.model.js';
+import { BoardingPass } from '../models/boardingPass.model.js';
 import { generateQRCodeWithLogo } from '../utils/qrGenerator.js';
 import { uploadOnCloudinary } from '../utils/cloudinary.js';
 
@@ -14,7 +16,14 @@ async function runRecovery() {
   await connectDB();
 
   const targetBatchId = process.argv[2]; // Optional CLI argument: node recoverCertificates.js [batchId]
-  const query = targetBatchId ? { $or: [{ batchId: targetBatchId }, { _id: mongoose.isValidObjectId(targetBatchId) ? targetBatchId : null }] } : {};
+  const query = targetBatchId
+    ? {
+        $or: [
+          { batchId: targetBatchId },
+          { _id: mongoose.isValidObjectId(targetBatchId) ? targetBatchId : null },
+        ].filter(Boolean),
+      }
+    : {};
 
   const batches = await CertificateBatch.find(query).sort({ createdAt: -1 });
   console.log(`📋 Found ${batches.length} batch(es) in database.`);
@@ -24,11 +33,87 @@ async function runRecovery() {
   for (const batch of batches) {
     console.log(`\n--------------------------------------------------`);
     console.log(`🔎 Batch: #${batch.batchId} | Event: "${batch.eventName}" | Date: ${batch.eventDate?.toISOString()?.slice(0, 10)}`);
-    console.log(`   Status: ${batch.status} | Students in roster: ${batch.students?.length || 0}`);
+    console.log(`   Status: ${batch.status} | Students in roster: ${batch.students?.length || 0} | Stored studentCount: ${batch.studentCount || 0}`);
 
+    // If batch.students array is missing or empty, discover students from BackgroundJobs, Certificates, or BoardingPasses
     if (!batch.students || batch.students.length === 0) {
-      console.log(`   ⚠️ No students found in this batch record. Skipping.`);
-      continue;
+      console.log(`   ⚠️ No students embedded in batch document. Searching BackgroundJobs & related records...`);
+      const studentMap = new Map();
+
+      // 1. Search BackgroundJob collection
+      const jobs = await BackgroundJob.find({
+        $or: [
+          { 'payload.batchId': batch._id },
+          { 'payload.batchId': String(batch._id) },
+          { 'payload.batchId': batch.batchId },
+          { 'payload.eventName': batch.eventName },
+        ],
+      }).lean();
+
+      console.log(`   📦 Found ${jobs.length} matching background job(s) for this batch/event.`);
+      for (const job of jobs) {
+        const s = job.payload?.student;
+        if (s?.name && s?.email) {
+          const email = s.email.trim().toLowerCase();
+          if (!studentMap.has(email)) {
+            studentMap.set(email, {
+              name: s.name.trim(),
+              email,
+              position: s.position?.trim() || 'Participant',
+            });
+          }
+        }
+      }
+
+      // 2. Search Certificates collection for any existing or unlinked certificates
+      const existingCerts = await Certificate.find({
+        $or: [
+          { batchId: batch._id },
+          { eventName: batch.eventName },
+        ],
+      }).lean();
+
+      console.log(`   📜 Found ${existingCerts.length} certificate record(s) matching event/batch.`);
+      for (const c of existingCerts) {
+        if (c.studentName && c.studentEmail) {
+          const email = c.studentEmail.trim().toLowerCase();
+          if (!studentMap.has(email)) {
+            studentMap.set(email, {
+              name: c.studentName.trim(),
+              email,
+              position: c.position?.trim() || 'Participant',
+            });
+          }
+        }
+      }
+
+      // 3. Search BoardingPass collection if still empty
+      if (studentMap.size === 0) {
+        const passes = await BoardingPass.find({ eventName: batch.eventName }).lean();
+        console.log(`   🎫 Found ${passes.length} boarding pass(es) for event "${batch.eventName}".`);
+        for (const p of passes) {
+          if (p.studentName && p.studentEmail) {
+            const email = p.studentEmail.trim().toLowerCase();
+            if (!studentMap.has(email)) {
+              studentMap.set(email, {
+                name: p.studentName.trim(),
+                email,
+                position: 'Participant',
+              });
+            }
+          }
+        }
+      }
+
+      if (studentMap.size > 0) {
+        batch.students = Array.from(studentMap.values());
+        batch.studentCount = batch.students.length;
+        await batch.save();
+        console.log(`   ✨ Successfully discovered and hydrated ${batch.students.length} students from historical jobs/records!`);
+      } else {
+        console.log(`   ❌ No historical student records found in BackgroundJob, Certificate, or BoardingPass collections for "${batch.eventName}".`);
+        continue;
+      }
     }
 
     let batchRestored = 0;
@@ -100,7 +185,7 @@ async function runRecovery() {
     // Refresh batch counts and status
     const actualCount = await Certificate.countDocuments({ batchId: batch._id });
     batch.generatedCount = actualCount;
-    if (actualCount >= batch.students.length) {
+    if (actualCount >= batch.students.length && batch.students.length > 0) {
       batch.status = 'COMPLETED';
       batch.completedAt = batch.completedAt || new Date();
     }
