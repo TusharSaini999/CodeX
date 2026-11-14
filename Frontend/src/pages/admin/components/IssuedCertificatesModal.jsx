@@ -139,7 +139,18 @@ export default function IssuedCertificatesModal({ onClose, isModal = false, isSu
     setIsExporting(true);
     try {
       const res = await certificateService.exportAllCertificates({ search: debouncedSearch });
-      const blob = new Blob([res.data], { type: "text/csv;charset=utf-8;" });
+      const rawData =
+        res instanceof Blob
+          ? res
+          : res?.data instanceof Blob
+          ? res.data
+          : res?.data !== undefined
+          ? res.data
+          : res;
+      const blob =
+        rawData instanceof Blob
+          ? rawData
+          : new Blob([String(rawData || "")], { type: "text/csv;charset=utf-8;" });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;

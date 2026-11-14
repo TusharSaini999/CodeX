@@ -454,7 +454,20 @@ export default function CertificateBatchesSection({ isSuperAdmin, onSwitchToCrea
 
       try {
         const res = await certificateService.exportBatchCertificates(batch._id);
-        const text = typeof res.data === "string" ? res.data : await new Response(res.data).text();
+        const rawData =
+          res instanceof Blob
+            ? res
+            : res?.data instanceof Blob
+            ? res.data
+            : res?.data !== undefined
+            ? res.data
+            : res;
+        const text =
+          rawData instanceof Blob
+            ? await rawData.text()
+            : typeof rawData === "string"
+            ? rawData
+            : "";
         const lineCount = text.trim().split(/\r?\n/).length;
 
         // If server produced at least 2 lines (header + 1 record)

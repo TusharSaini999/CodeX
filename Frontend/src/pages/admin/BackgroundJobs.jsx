@@ -225,8 +225,32 @@ export default function BackgroundJobs() {
       }
 
       const res = await adminService.exportJobLogs(params);
-      const mimeType = format === "json" ? "application/json;charset=utf-8;" : "text/csv;charset=utf-8;";
-      const blob = new Blob([res.data], { type: mimeType });
+      
+      const rawData =
+        res instanceof Blob
+          ? res
+          : res?.data instanceof Blob
+          ? res.data
+          : res?.data !== undefined
+          ? res.data
+          : res;
+
+      const mimeType =
+        format === "json"
+          ? "application/json;charset=utf-8;"
+          : "text/csv;charset=utf-8;";
+
+      let blob;
+      if (rawData instanceof Blob) {
+        blob = rawData;
+      } else if (typeof rawData === "string") {
+        blob = new Blob([rawData], { type: mimeType });
+      } else if (typeof rawData === "object" && rawData !== null) {
+        blob = new Blob([JSON.stringify(rawData, null, 2)], { type: mimeType });
+      } else {
+        blob = new Blob([String(rawData || "")], { type: mimeType });
+      }
+
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
