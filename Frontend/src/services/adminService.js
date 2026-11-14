@@ -86,6 +86,13 @@ class AdminService {
     return axiosInstance.delete("/admin/jobs/clear-completed");
   }
 
+  async exportJobLogs(params = {}) {
+    return axiosInstance.get("/admin/jobs/export", {
+      params,
+      responseType: "blob",
+    });
+  }
+
   async getAnnouncementsHistory(params = {}) {
     return axiosInstance.get("/admin/announcements-history", { params });
   }

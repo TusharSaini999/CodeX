@@ -224,4 +224,113 @@ const clearCompletedJobs = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, { deletedCount: result.deletedCount }, 'Cleared completed background jobs'));
 });
 
-export { getBackgroundJobs, getJobStats, retryJob, deleteJob, clearCompletedJobs };
+/**
+ * Export background job logs as CSV or JSON
+ * @route GET /api/v1/admin/jobs/export
+ * @access Private (Admin & Super Admin)
+ */
+const exportJobLogs = asyncHandler(async (req, res) => {
+  const format = (req.query.format || 'csv').toLowerCase();
+  const rawStatus = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+  const rawType = typeof req.query.type === 'string' ? req.query.type.trim() : '';
+  const rawSearch = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+  const scope = (req.query.scope || 'all').toLowerCase();
+
+  const query = {};
+
+  if (scope === 'filtered') {
+    const allowedStatuses = ['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'SUPPRESSED'];
+    if (rawStatus && allowedStatuses.includes(rawStatus)) {
+      query.status = rawStatus;
+    }
+
+    const allowedTypes = ['EMAIL_SEND', 'CERTIFICATE_BULK', 'BOARDING_PASS_BULK', 'ANNOUNCEMENT_BULK'];
+    if (rawType && allowedTypes.includes(rawType)) {
+      query.type = rawType;
+    }
+
+    if (rawSearch) {
+      const safeSearch = escapeRegExp(rawSearch).slice(0, 100);
+      query.$or = [
+        { type: { $regex: safeSearch, $options: 'i' } },
+        { 'payload.email': { $regex: safeSearch, $options: 'i' } },
+        { 'payload.student.email': { $regex: safeSearch, $options: 'i' } },
+        { 'payload.eventName': { $regex: safeSearch, $options: 'i' } },
+        { 'payload.subject': { $regex: safeSearch, $options: 'i' } },
+      ];
+    }
+  }
+
+  const jobs = await BackgroundJob.find(query)
+    .sort({ createdAt: -1 })
+    .limit(20000)
+    .lean();
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+
+  if (format === 'json') {
+    const filename = `CodeX_Task_Queue_Logs_${timestamp}.json`;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+    return res.status(200).send(JSON.stringify(jobs, null, 2));
+  }
+
+  // Prepend UTF-8 BOM (\uFEFF) for Microsoft Excel compatibility
+  const headers = [
+    'Job ID',
+    'Task Type',
+    'Status',
+    'Recipient / Email',
+    'Student Name',
+    'Event / Subject',
+    'Attempts',
+    'Max Attempts',
+    'Duration (sec)',
+    'Created At',
+    'Scheduled At',
+    'Processed At',
+    'Last Error / Failure Details',
+  ];
+
+  const rows = [headers];
+
+  for (const job of jobs) {
+    const p = job.payload || {};
+    const recipientEmail = p.email || p.student?.email || (p.emailList?.length ? `${p.emailList.length} recipients` : '');
+    const studentName = p.student?.name || '';
+    const eventOrSubject = p.eventName || p.subject || '';
+
+    let durationSec = '';
+    if (job.processedAt && job.createdAt) {
+      const ms = new Date(job.processedAt).getTime() - new Date(job.createdAt).getTime();
+      durationSec = (ms / 1000).toFixed(2);
+    }
+
+    rows.push([
+      `"${String(job._id || '').replace(/"/g, '""')}"`,
+      `"${String(job.type || '').replace(/"/g, '""')}"`,
+      `"${String(job.status || '').replace(/"/g, '""')}"`,
+      `"${String(recipientEmail).replace(/"/g, '""')}"`,
+      `"${String(studentName).replace(/"/g, '""')}"`,
+      `"${String(eventOrSubject).replace(/"/g, '""')}"`,
+      `"${job.attempts ?? 0}"`,
+      `"${job.maxAttempts ?? 3}"`,
+      `"${durationSec}"`,
+      `"${job.createdAt ? new Date(job.createdAt).toISOString() : ''}"`,
+      `"${job.scheduledAt ? new Date(job.scheduledAt).toISOString() : ''}"`,
+      `"${job.processedAt ? new Date(job.processedAt).toISOString() : ''}"`,
+      `"${String(job.lastError || '').replace(/"/g, '""')}"`,
+    ]);
+  }
+
+  const csvContent = '\uFEFF' + rows.map((r) => r.join(',')).join('\r\n');
+  const filename = `CodeX_Task_Queue_Logs_${timestamp}.csv`;
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+  return res.status(200).send(csvContent);
+});
+
+export { getBackgroundJobs, getJobStats, retryJob, deleteJob, clearCompletedJobs, exportJobLogs };
