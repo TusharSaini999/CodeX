@@ -265,11 +265,6 @@ const exportJobLogs = asyncHandler(async (req, res) => {
     }
   }
 
-  const jobs = await BackgroundJob.find(query)
-    .sort({ createdAt: -1 })
-    .limit(20000)
-    .lean();
-
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 
   if (format === 'json') {
@@ -277,7 +272,31 @@ const exportJobLogs = asyncHandler(async (req, res) => {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
-    return res.status(200).send(JSON.stringify(jobs, null, 2));
+
+    // High-performance streaming cursor with batchSize: 500
+    // Memory footprint stays constant O(1) regardless of whether there are 100 or 100,000 tasks
+    const cursor = BackgroundJob.find(query)
+      .sort({ createdAt: -1 })
+      .lean()
+      .cursor({ batchSize: 500 });
+
+    req.on('close', () => {
+      cursor.close().catch(() => {});
+    });
+
+    res.write('[\n');
+    let isFirst = true;
+
+    for await (const job of cursor) {
+      if (!isFirst) {
+        res.write(',\n');
+      }
+      res.write(JSON.stringify(job, null, 2));
+      isFirst = false;
+    }
+
+    res.write('\n]');
+    return res.end();
   }
 
   // Prepend UTF-8 BOM (\uFEFF) for Microsoft Excel compatibility
@@ -297,9 +316,26 @@ const exportJobLogs = asyncHandler(async (req, res) => {
     'Last Error / Failure Details',
   ];
 
-  const rows = [headers];
+  const filename = `CodeX_Task_Queue_Logs_${timestamp}.csv`;
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
 
-  for (const job of jobs) {
+  // Stream CSV header with UTF-8 BOM
+  res.write('\uFEFF' + headers.map((h) => `"${h}"`).join(',') + '\r\n');
+
+  // Memory optimization: Project only the required metadata fields to avoid loading large HTML bodies into RAM
+  const cursor = BackgroundJob.find(query)
+    .select('type status attempts maxAttempts lastError createdAt scheduledAt processedAt payload.email payload.student payload.eventName payload.subject payload.emailList')
+    .sort({ createdAt: -1 })
+    .lean()
+    .cursor({ batchSize: 500 });
+
+  req.on('close', () => {
+    cursor.close().catch(() => {});
+  });
+
+  for await (const job of cursor) {
     const p = job.payload || {};
     const recipientEmail = p.email || p.student?.email || (p.emailList?.length ? `${p.emailList.length} recipients` : '');
     const studentName = p.student?.name || '';
@@ -311,13 +347,13 @@ const exportJobLogs = asyncHandler(async (req, res) => {
       durationSec = (ms / 1000).toFixed(2);
     }
 
-    rows.push([
+    const row = [
       `"${String(job._id || '').replace(/"/g, '""')}"`,
       `"${String(job.type || '').replace(/"/g, '""')}"`,
       `"${String(job.status || '').replace(/"/g, '""')}"`,
-      `"${String(recipientEmail).replace(/"/g, '""')}"`,
-      `"${String(studentName).replace(/"/g, '""')}"`,
-      `"${String(eventOrSubject).replace(/"/g, '""')}"`,
+      `"${String(recipientEmail || '').replace(/"/g, '""')}"`,
+      `"${String(studentName || '').replace(/"/g, '""')}"`,
+      `"${String(eventOrSubject || '').replace(/"/g, '""')}"`,
       `"${job.attempts ?? 0}"`,
       `"${job.maxAttempts ?? 3}"`,
       `"${durationSec}"`,
@@ -325,16 +361,12 @@ const exportJobLogs = asyncHandler(async (req, res) => {
       `"${job.scheduledAt ? new Date(job.scheduledAt).toISOString() : ''}"`,
       `"${job.processedAt ? new Date(job.processedAt).toISOString() : ''}"`,
       `"${String(job.lastError || '').replace(/"/g, '""')}"`,
-    ]);
+    ];
+
+    res.write(row.join(',') + '\r\n');
   }
 
-  const csvContent = '\uFEFF' + rows.map((r) => r.join(',')).join('\r\n');
-  const filename = `CodeX_Task_Queue_Logs_${timestamp}.csv`;
-
-  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
-  return res.status(200).send(csvContent);
+  return res.end();
 });
 
 export { getBackgroundJobs, getJobStats, retryJob, deleteJob, clearCompletedJobs, exportJobLogs };
