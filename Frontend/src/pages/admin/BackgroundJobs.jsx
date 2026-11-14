@@ -22,11 +22,15 @@ import {
   FileSpreadsheet,
   FileText,
 } from "lucide-react";
+import { useSelector } from "react-redux";
 import { adminService } from "../../services/adminService";
 import { useConfirm } from "../../context/ConfirmContext";
 import JobDetailsModal from "./components/JobDetailsModal";
 
 export default function BackgroundJobs() {
+  const currentUser = useSelector((state) => state.auth.user);
+  const isSuperAdmin = (currentUser?.admin?.role || currentUser?.role) === "SuperAdmin";
+
   const [items, setItems] = useState([]);
   const [stats, setStats] = useState({
     total: 0,
@@ -196,6 +200,14 @@ export default function BackgroundJobs() {
   };
 
   const handleExportLogs = async (format = "csv", scope = "all") => {
+    if (!isSuperAdmin) {
+      setMessage({
+        type: "error",
+        text: "Access denied: Only Super Admins are authorized to export task queue logs.",
+      });
+      return;
+    }
+
     setIsExporting(true);
     setShowExportMenu(false);
     setMessage({ type: "", text: "" });
@@ -382,96 +394,101 @@ export default function BackgroundJobs() {
             </button>
           )}
 
-          {/* Export Logs Dropdown */}
-          <div className="relative" ref={exportMenuRef}>
-            <button
-              onClick={() => setShowExportMenu((prev) => !prev)}
-              disabled={isExporting}
-              className="inline-flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-card border border-border/80 text-xs font-mono text-text hover:text-accent hover:border-accent/40 transition-all shadow-sm cursor-pointer disabled:opacity-50"
-              title="Export Task Queue Logs"
-            >
-              {isExporting ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
-              ) : (
-                <Download className="w-3.5 h-3.5" />
-              )}
-              <span>{isExporting ? "Exporting..." : "Export Logs"}</span>
-              <ChevronDown className="w-3 h-3 text-text-muted" />
-            </button>
-
-            {showExportMenu && (
-              <div className="absolute right-0 top-full mt-2 w-64 bg-card border border-border rounded-xl shadow-2xl z-50 py-1.5 backdrop-blur-xl animate-fadeIn">
-                <div className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-text-muted border-b border-border/60">
-                  Select Export Format
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => handleExportLogs("csv", "all")}
-                  className="w-full px-3.5 py-2 text-left text-xs font-mono hover:bg-card-hover flex items-center justify-between text-text transition-colors cursor-pointer"
-                >
-                  <span className="flex items-center gap-2">
-                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>All Logs as CSV</span>
-                  </span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-bold border border-emerald-500/20">
-                    EXCEL
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleExportLogs("json", "all")}
-                  className="w-full px-3.5 py-2 text-left text-xs font-mono hover:bg-card-hover flex items-center justify-between text-text transition-colors cursor-pointer"
-                >
-                  <span className="flex items-center gap-2">
-                    <FileText className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>All Logs as JSON</span>
-                  </span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-bold border border-cyan-500/20">
-                    RAW
-                  </span>
-                </button>
-
-                {(statusFilter || typeFilter || search) && (
-                  <>
-                    <div className="my-1 border-t border-border/60" />
-                    <div className="px-3 py-1 text-[10px] font-mono uppercase tracking-wider text-accent font-bold">
-                      Filtered Scope
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => handleExportLogs("csv", "filtered")}
-                      className="w-full px-3.5 py-2 text-left text-xs font-mono hover:bg-card-hover flex items-center justify-between text-text transition-colors cursor-pointer"
-                    >
-                      <span className="flex items-center gap-2">
-                        <FileSpreadsheet className="w-3.5 h-3.5 text-accent" />
-                        <span>Filtered as CSV</span>
-                      </span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent font-bold border border-accent/20">
-                        CSV
-                      </span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleExportLogs("json", "filtered")}
-                      className="w-full px-3.5 py-2 text-left text-xs font-mono hover:bg-card-hover flex items-center justify-between text-text transition-colors cursor-pointer"
-                    >
-                      <span className="flex items-center gap-2">
-                        <FileText className="w-3.5 h-3.5 text-accent" />
-                        <span>Filtered as JSON</span>
-                      </span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent font-bold border border-accent/20">
-                        JSON
-                      </span>
-                    </button>
-                  </>
+          {/* Export Logs Dropdown (Super Admin Only) */}
+          {isSuperAdmin && (
+            <div className="relative" ref={exportMenuRef}>
+              <button
+                onClick={() => setShowExportMenu((prev) => !prev)}
+                disabled={isExporting}
+                className="inline-flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-card border border-border/80 text-xs font-mono text-text hover:text-accent hover:border-accent/40 transition-all shadow-sm cursor-pointer disabled:opacity-50"
+                title="Super Admin • Export Task Queue Logs"
+              >
+                {isExporting ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
+                ) : (
+                  <Download className="w-3.5 h-3.5" />
                 )}
-              </div>
-            )}
-          </div>
+                <span>{isExporting ? "Exporting..." : "Export Logs"}</span>
+                <ChevronDown className="w-3 h-3 text-text-muted" />
+              </button>
+
+              {showExportMenu && (
+                <div className="absolute right-0 top-full mt-2 w-64 bg-card border border-border rounded-xl shadow-2xl z-50 py-1.5 backdrop-blur-xl animate-fadeIn">
+                  <div className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-text-muted border-b border-border/60 flex items-center justify-between">
+                    <span>Export Format</span>
+                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-fuchsia-500/15 text-fuchsia-400 font-bold border border-fuchsia-500/30">
+                      SUPER ADMIN
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleExportLogs("csv", "all")}
+                    className="w-full px-3.5 py-2 text-left text-xs font-mono hover:bg-card-hover flex items-center justify-between text-text transition-colors cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2">
+                      <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>All Logs as CSV</span>
+                    </span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-bold border border-emerald-500/20">
+                      EXCEL
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleExportLogs("json", "all")}
+                    className="w-full px-3.5 py-2 text-left text-xs font-mono hover:bg-card-hover flex items-center justify-between text-text transition-colors cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2">
+                      <FileText className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>All Logs as JSON</span>
+                    </span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-bold border border-cyan-500/20">
+                      RAW
+                    </span>
+                  </button>
+
+                  {(statusFilter || typeFilter || search) && (
+                    <>
+                      <div className="my-1 border-t border-border/60" />
+                      <div className="px-3 py-1 text-[10px] font-mono uppercase tracking-wider text-accent font-bold">
+                        Filtered Scope
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleExportLogs("csv", "filtered")}
+                        className="w-full px-3.5 py-2 text-left text-xs font-mono hover:bg-card-hover flex items-center justify-between text-text transition-colors cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2">
+                          <FileSpreadsheet className="w-3.5 h-3.5 text-accent" />
+                          <span>Filtered as CSV</span>
+                        </span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent font-bold border border-accent/20">
+                          CSV
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleExportLogs("json", "filtered")}
+                        className="w-full px-3.5 py-2 text-left text-xs font-mono hover:bg-card-hover flex items-center justify-between text-text transition-colors cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2">
+                          <FileText className="w-3.5 h-3.5 text-accent" />
+                          <span>Filtered as JSON</span>
+                        </span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent font-bold border border-accent/20">
+                          JSON
+                        </span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </header>
 
@@ -725,18 +742,20 @@ export default function BackgroundJobs() {
             <option value="ANNOUNCEMENT_BULK">Announcement Bulk</option>
           </select>
 
-          <button
-            onClick={() => handleExportLogs("csv", statusFilter || typeFilter || search ? "filtered" : "all")}
-            disabled={isExporting}
-            title={statusFilter || typeFilter || search ? "Export Filtered Logs as CSV" : "Export All Logs as CSV"}
-            className="p-2.5 rounded-xl bg-card border border-border text-text-muted hover:text-accent hover:border-accent/40 hover:bg-card-hover transition-colors shadow-sm cursor-pointer disabled:opacity-50"
-          >
-            {isExporting ? (
-              <Loader2 className="w-4 h-4 animate-spin text-accent" />
-            ) : (
-              <Download className="w-4 h-4" />
-            )}
-          </button>
+          {isSuperAdmin && (
+            <button
+              onClick={() => handleExportLogs("csv", statusFilter || typeFilter || search ? "filtered" : "all")}
+              disabled={isExporting}
+              title={statusFilter || typeFilter || search ? "Super Admin: Export Filtered Logs as CSV" : "Super Admin: Export All Logs as CSV"}
+              className="p-2.5 rounded-xl bg-card border border-border text-text-muted hover:text-accent hover:border-accent/40 hover:bg-card-hover transition-colors shadow-sm cursor-pointer disabled:opacity-50"
+            >
+              {isExporting ? (
+                <Loader2 className="w-4 h-4 animate-spin text-accent" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+            </button>
+          )}
 
           <button
             onClick={() => fetchJobsData(true)}

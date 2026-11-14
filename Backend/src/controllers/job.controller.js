@@ -227,9 +227,13 @@ const clearCompletedJobs = asyncHandler(async (req, res) => {
 /**
  * Export background job logs as CSV or JSON
  * @route GET /api/v1/admin/jobs/export
- * @access Private (Admin & Super Admin)
+ * @access Private (Super Admin Only)
  */
 const exportJobLogs = asyncHandler(async (req, res) => {
+  if (req.admin?.role !== 'SuperAdmin') {
+    throw new ApiError(403, 'Forbidden: Only Super Admins are authorized to export task queue logs');
+  }
+
   const format = (req.query.format || 'csv').toLowerCase();
   const rawStatus = typeof req.query.status === 'string' ? req.query.status.trim() : '';
   const rawType = typeof req.query.type === 'string' ? req.query.type.trim() : '';
